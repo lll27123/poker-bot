@@ -1,13 +1,13 @@
 import streamlit as st
 import numpy as np
-import eval7
+from deuces import Card, Evaluator
 
 # -----------------------------
 # Cartes & parsing
 # -----------------------------
 RANKS = list("23456789TJQKA")
 SUITS = list("shdc")  # s=♠, h=♥, d=♦, c=♣
-ALL = [r + s for r in RANKS for s in SUITS]  # "As", "Kh", ...
+ALL = [r + s for r in RANKS for s in SUITS]
 
 def parse_cards(s: str):
     s = (s or "").strip()
@@ -22,16 +22,18 @@ def parse_cards(s: str):
             out.append(r + t)
     return out
 
-def to_eval7(cards):
-    return [eval7.Card(c) for c in cards]
+def to_deuces(cards):
+    return [Card.new(c) for c in cards]
 
 def unseen(used):
     u = set(used)
     return [c for c in ALL if c not in u]
 
 # -----------------------------
-# Monte-Carlo (eval7 : plus le score est GRAND, meilleure est la main)
+# Monte-Carlo (deuces : plus le rang est PETIT, meilleure est la main)
 # -----------------------------
+evaluator = Evaluator()
+
 def equity_vs_field(hero, board, n_opp=2, n_sim=50000, rng=None):
     if rng is None:
         rng = np.random.default_rng()
@@ -41,11 +43,11 @@ def equity_vs_field(hero, board, n_opp=2, n_sim=50000, rng=None):
     draw = need_board + need_opp
 
     used = hero + board
-    deck_text = unseen(used)
-    deck = np.array(deck_text, dtype=object)
+    deck_txt = unseen(used)
+    deck = np.array(deck_txt, dtype=object)
 
-    hero_e = to_eval7(hero)
-    board_fixed_e = to_eval7(board)
+    hero_d = to_deuces(hero)
+    board_fixed_d = to_deuces(board)
 
     wins = 0
     ties = 0
@@ -53,36 +55,35 @@ def equity_vs_field(hero, board, n_opp=2, n_sim=50000, rng=None):
     for _ in range(n_sim):
         sample = rng.choice(deck, size=draw, replace=False)
         add_board = list(sample[:need_board])
-        opp_text = list(sample[need_board:])
+        opp_txt = list(sample[need_board:])
 
-        board_full_e = board_fixed_e + to_eval7(add_board)
+        board_full_d = board_fixed_d + to_deuces(add_board)
 
-        hero_score = eval7.evaluate(hero_e + board_full_e)
+        hero_rank = evaluator.evaluate(board_full_d, hero_d)
 
-        best_opp = -1
+        best_opp = 10**9
         best_count = 0
         for i in range(n_opp):
-            opp_e = to_eval7(opp_text[2*i:2*i+2])
-            score = eval7.evaluate(opp_e + board_full_e)
-            if score > best_opp:
-                best_opp = score
+            opp_d = to_deuces(opp_txt[2*i:2*i+2])
+            rank = evaluator.evaluate(board_full_d, opp_d)
+            if rank < best_opp:
+                best_opp = rank
                 best_count = 1
-            elif score == best_opp:
+            elif rank == best_opp:
                 best_count += 1
 
-        if hero_score > best_opp:
+        if hero_rank < best_opp:
             wins += 1
-        elif hero_score == best_opp:
+        elif hero_rank == best_opp:
             ties += 1 / best_count
 
-    return (wins + ties) / n_sim
+    return (wins + ties) / n_sim  # équité héro vs field
 
 # -----------------------------
 # Politique de décision
 # -----------------------------
 def advise_action(p_eq, to_call, pot, aggressivity=1.0):
     if to_call <= 0:
-        # Pas de relance à payer : value bet si bon edge
         if p_eq > 0.55:
             bet = max(1, int(pot * (0.5 + 0.3 * aggressivity)))
             return f"Bet {bet} 💰  (équité {p_eq:.2%})"
@@ -103,11 +104,12 @@ def advise_action(p_eq, to_call, pot, aggressivity=1.0):
 # -----------------------------
 # UI Streamlit
 # -----------------------------
-st.set_page_config(page_title="Poker Bot Advisor (eval7)", page_icon="🂡")
-st.title("🂡 Poker Bot Advisor — rapide & précis (eval7)")
+st.set_page_config(page_title="Poker Bot Advisor (deuces)", page_icon="🂡")
+st.title("🂡 Poker Bot Advisor — rapide & précis (deuces)")
 
 st.markdown(
-    "Format cartes : `As Kh` ; board : `2d 7c Jd` • Couleurs: `s`=pique, `h`=cœur, `d`=carreau, `c`=trèfle."
+    "Format cartes : **As Kh** ; board : **2d 7c Jd**  \n"
+    "Couleurs : `s`=pique, `h`=cœur, `d`=carreau, `c`=trèfle."
 )
 
 c1, c2 = st.columns(2)
@@ -126,17 +128,16 @@ aggr = c7.slider("Agressivité", 0.0, 2.0, 1.0, 0.1)
 if st.button("Calculer"):
     hero = parse_cards(hero_str)
     board = parse_cards(board_str)
-    used = hero + board
 
     if len(hero) != 2:
         st.error("Ta main doit contenir exactement 2 cartes.")
     elif len(board) not in (0, 3, 4, 5):
         st.error("Le board doit avoir 0, 3, 4 ou 5 cartes.")
-    elif len(set(used)) != len(used):
+    elif len(set(hero + board)) != len(hero + board):
         st.error("Carte dupliquée détectée.")
     else:
         with st.spinner(f"Monte-Carlo en cours ({n_sim:,} tirages)…"):
             eq = equity_vs_field(hero, board, n_opp=n_opp, n_sim=n_sim)
         st.write(f"**Équité estimée** : {eq:.2%}")
         st.success(advise_action(eq, to_call, pot, aggressivity=aggr))
-        st.caption("Évaluations exactes par `eval7` + tirages Monte-Carlo des cartes inconnues.")
+        st.caption("Évaluations exactes par `deuces` + tirages Monte-Carlo des cartes inconnues.")
