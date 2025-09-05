@@ -1,7 +1,7 @@
 
 import streamlit as st
 import numpy as np
-from treys import Card, Evaluator
+from deuces import Card, Evaluator
 
 # -----------------------------
 # Utilitaires cartes / parsing
