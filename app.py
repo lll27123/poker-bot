@@ -1,6 +1,4 @@
-streamlit
-treys
-numpy
+
 import streamlit as st
 import numpy as np
 from treys import Card, Evaluator
